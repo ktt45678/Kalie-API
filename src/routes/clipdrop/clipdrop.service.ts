@@ -2,8 +2,8 @@ import puppeteer from 'puppeteer';
 import { URL } from 'url';
 import path from 'path';
 
+import { puppeteerPool } from './../../utils/index.js';
 import { CreateImageDto } from './dto/index.js';
-import { CHROME_PATH } from '../../config.js';
 
 export interface CreateImageResult {
   name: string;
@@ -14,8 +14,18 @@ export class ClipDropService {
   async createImages(createImageDto: CreateImageDto) {
     const { prompt, style } = createImageDto;
 
-    const browser = await puppeteer.launch({ executablePath: CHROME_PATH, headless: 'new' });
+    const browser = await puppeteerPool.acquire();
     const page = await browser.newPage();
+
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      if (request.resourceType() === 'stylesheet' || request.resourceType() === 'font')
+        request.abort();
+      else if (request.url().startsWith('https://static.clipdrop.co'))
+        request.abort();
+      else
+        request.continue();
+    });
 
     await page.goto('https://clipdrop.co/stable-diffusion');
 
@@ -52,14 +62,8 @@ export class ClipDropService {
     const createdFiles = await new Promise<CreateImageResult[]>((resolve) => {
       let totalResponses = 0;
       let collectedFiles: CreateImageResult[] = [];
-      const writeFileController = new AbortController();
-      // Timeout
-      const endTimeout = setTimeout(() => {
-        writeFileController.abort();
-        resolve(collectedFiles);
-      }, 120_000);
-      // Detect response
-      page.on('response', async (response) => {
+      // Intercept image function
+      async function interceptImgResponse(response: puppeteer.HTTPResponse) {
         const url = response.url();
         const headers = response.headers();
         if (!url.startsWith('https://firebasestorage.googleapis.com'))
@@ -80,10 +84,18 @@ export class ClipDropService {
           clearTimeout(endTimeout);
           resolve(collectedFiles);
         }
-      });
+      }
+      // Detect response
+      page.on('response', interceptImgResponse);
+      // Timeout
+      const endTimeout = setTimeout(() => {
+        resolve(collectedFiles);
+      }, 90_000);
     });
 
-    await browser.close();
+    page.removeAllListeners();
+
+    await puppeteerPool.destroy(browser);
 
     return createdFiles;
   }
