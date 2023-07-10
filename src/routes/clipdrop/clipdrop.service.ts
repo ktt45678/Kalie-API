@@ -12,7 +12,7 @@ export interface CreateImageResult {
 
 export class ClipDropService {
   async createImages(createImageDto: CreateImageDto) {
-    const { prompt, style } = createImageDto;
+    const { prompt, style, responseFormat } = createImageDto;
 
     const browser = await puppeteerPool.acquire();
     const page = await browser.newPage();
@@ -75,9 +75,10 @@ export class ClipDropService {
         // Process file
         const fileBuffer = await response.buffer();
         totalResponses++;
+        const base64Content = fileBuffer.toString('base64');
         collectedFiles.push({
           name: fileName,
-          url: `data:${headers['content-type']};base64,${fileBuffer.toString('base64')}`
+          url: responseFormat === 'data_url' ? `data:${headers['content-type']};base64,${base64Content}` : base64Content
         });
         // Check collected files
         if (totalResponses >= 4) {
